@@ -148,6 +148,61 @@ The `api_key` field supports environment variable expansion: `"${GOOGLE_API_KEY}
 
 Environment variables override the config file: `PLAYBOOKD_DATA` takes precedence over `[data] dir`.
 
+### Embedding providers
+
+Each provider requires an API key or a running local server. Get your API key from:
+
+- **Google Gemini**: [Google AI Studio](https://aistudio.google.com/apikey) (free tier available)
+- **OpenAI**: [OpenAI Platform](https://platform.openai.com/api-keys)
+- **Ollama**: No key needed — run locally with `ollama serve`
+
+**Google Gemini**
+
+```go
+import "github.com/lucas-stellet/playbookd/embed"
+
+embedFn := embed.Google(embed.GoogleConfig{
+    APIKey: os.Getenv("GOOGLE_API_KEY"),
+    // Model defaults to "gemini-embedding-001"
+})
+
+mgr, _ := playbookd.NewPlaybookManager(playbookd.ManagerConfig{
+    DataDir:   "./playbooks",
+    EmbedFunc: embedFn,
+    EmbedDims: 768,
+})
+```
+
+**OpenAI**
+
+```go
+embedFn := embed.OpenAI(embed.OpenAIConfig{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    // Model defaults to "text-embedding-3-small"
+})
+
+mgr, _ := playbookd.NewPlaybookManager(playbookd.ManagerConfig{
+    DataDir:   "./playbooks",
+    EmbedFunc: embedFn,
+    EmbedDims: 1536,
+})
+```
+
+**Ollama (local)**
+
+```go
+embedFn := embed.Ollama(embed.OllamaConfig{
+    // URL defaults to "http://localhost:11434"
+    // Model defaults to "nomic-embed-text-v2-moe"
+})
+
+mgr, _ := playbookd.NewPlaybookManager(playbookd.ManagerConfig{
+    DataDir:   "./playbooks",
+    EmbedFunc: embedFn,
+    EmbedDims: 384,
+})
+```
+
 ### Enabling vector search (FAISS)
 
 To use hybrid BM25 + vector search, provide an embedding function and build with `-tags vectors`:
