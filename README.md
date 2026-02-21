@@ -11,6 +11,7 @@ Instead of rediscovering solutions on every run, an agent using playbookd can fi
 - **Playbook lifecycle**: `draft` → `active` → `deprecated` → `archived`, with automatic promotion and deprecation based on execution outcomes
 - **Execution recording and reflection**: agents record step-by-step results; reflections are distilled into lessons that improve the playbook over time
 - **CLI tool**: inspect, search, prune, and reindex your playbook store from the command line
+- **Embedding providers**: built-in support for [OpenAI](https://platform.openai.com/), [Google Gemini](https://ai.google.dev/), and [Ollama](https://ollama.com/) — or bring your own `EmbeddingFunc`
 
 ## Installation
 
@@ -101,6 +102,52 @@ func main() {
 }
 ```
 
+### Configuration
+
+playbookd can be configured with a `.playbookd.toml` file. Generate one with:
+
+```sh
+playbookd init
+```
+
+Or pre-select a provider:
+
+```sh
+playbookd init -provider google
+```
+
+Example configuration:
+
+```toml
+[embedding]
+provider = "google"
+model = "gemini-embedding-001"
+api_key = "${GOOGLE_API_KEY}"
+url = "https://generativelanguage.googleapis.com/v1beta"
+dimensions = 768
+
+[data]
+dir = "./playbooks"
+
+[manager]
+auto_reflect = false
+max_age = "90d"
+min_confidence = 0.3
+```
+
+Supported providers:
+
+| Provider | `provider` | Default model | Dimensions |
+|----------|-----------|---------------|------------|
+| Google Gemini | `"google"` | `gemini-embedding-001` | 768–3072 |
+| OpenAI | `"openai"` | `text-embedding-3-small` | 1536 |
+| Ollama (local) | `"ollama"` | `nomic-embed-text-v2-moe` | 384 |
+| None | `"noop"` | — | — |
+
+The `api_key` field supports environment variable expansion: `"${GOOGLE_API_KEY}"` is replaced with the value of `GOOGLE_API_KEY` at load time.
+
+Environment variables override the config file: `PLAYBOOKD_DATA` takes precedence over `[data] dir`.
+
 ### Enabling vector search (FAISS)
 
 To use hybrid BM25 + vector search, provide an embedding function and build with `-tags vectors`:
@@ -132,6 +179,19 @@ export PLAYBOOKD_DATA=/var/lib/playbookd
 ```
 
 ### Commands
+
+**Initialize configuration**
+
+```sh
+# Generate a default .playbookd.toml
+playbookd init
+
+# Pre-select a provider
+playbookd init -provider google
+
+# Overwrite existing config
+playbookd init -force
+```
 
 **List playbooks**
 
