@@ -21,6 +21,27 @@ go get github.com/lucas-stellet/playbookd
 
 ## Usage
 
+### Where to initialize
+
+When integrating with a multi-agent system, place the `.playbookd.toml` and data directory at the **project root** (recommended). This way all agents share the same playbook store — one agent learns a procedure and others can find and reuse it.
+
+```
+my-project/
+  .playbookd.toml
+  playbooks/          # shared procedural memory
+    playbooks/
+    executions/
+    index/
+```
+
+If your agents handle very different domains and shouldn't share memory, use a separate `DataDir` per agent:
+
+```go
+mgr, _ := playbookd.NewPlaybookManager(playbookd.ManagerConfig{
+    DataDir: fmt.Sprintf("./workspaces/%s/playbooks", agentID),
+})
+```
+
 ### Creating a manager
 
 The `PlaybookManager` is the main entry point. It coordinates storage, indexing, and embeddings.
