@@ -223,7 +223,7 @@ func (fs *FileStore) ListExecutions(_ context.Context, playbookID string, limit 
 
 // matchesFilter checks if a playbook matches the given filter criteria.
 func matchesFilter(pb *Playbook, filter ListFilter) bool {
-	if filter.Status != nil && pb.Status != *filter.Status {
+	if !filter.IncludeArchived && pb.Archived {
 		return false
 	}
 	if filter.Category != "" && pb.Category != filter.Category {

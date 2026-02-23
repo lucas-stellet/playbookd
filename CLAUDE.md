@@ -41,7 +41,7 @@ The library is a single Go package (`playbookd`) at the repo root with one subpa
 
 Key interfaces and their implementations:
 - **`Store`** (interface in `store.go`) → `FileStore`: persists playbooks and execution records as JSON files using atomic writes (temp file + rename).
-- **`Indexer`** (interface in `indexer.go`) → `BleveIndexer`: BM25 full-text search with optional FAISS vector search. Indexes fields: name, description, tags, steps, lessons, category, status, confidence, success_rate.
+- **`Indexer`** (interface in `indexer.go`) → `BleveIndexer`: BM25 full-text search with optional FAISS vector search. Indexes fields: name, description, tags, steps, lessons, category, confidence, success_rate.
 - **`PlaybookManager`** (`manager.go`): orchestrates Store + Indexer + embedding. All CRUD operations go through the manager, which keeps store and index in sync.
 
 **Embedding providers** (`embed/` package):
@@ -49,7 +49,7 @@ Key interfaces and their implementations:
 - `embed.Ollama(cfg)` — calls Ollama API (default model: `nomic-embed-text-v2-moe`)
 - `embed.OpenAI(cfg)` — calls OpenAI-compatible API (default model: `text-embedding-3-small`)
 
-**Playbook lifecycle**: `draft` → `active` (auto-promoted after 3 successes) → `deprecated` (auto-deprecated when success rate < 30% with 5+ executions) → `archived` (via prune)
+**Archival**: Playbooks can be archived via `Prune()` based on staleness (age + low confidence). Archived playbooks are excluded from listing and search by default but remain on disk.
 
 **Wilson confidence scoring** (`playbook.go:WilsonConfidence`): uses the Wilson score interval lower bound at 95% CI to rank playbooks, preventing low-sample-size playbooks from outranking well-tested ones.
 

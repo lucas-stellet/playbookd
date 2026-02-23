@@ -14,7 +14,6 @@ type SearchQuery struct {
 	Text      string     // Natural language query
 	Mode      SearchMode // hybrid, bm25, or vector
 	Category  string     // Filter by category
-	Status    *Status    // Filter by status
 	MinScore  float64    // Minimum result score
 	Limit     int        // Max results (default 5)
 	Embedding []float32  // Pre-computed query embedding (optional)

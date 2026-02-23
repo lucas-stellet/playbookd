@@ -11,7 +11,7 @@ import (
 
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	statusFlag := fs.String("status", "", "filter by status (draft, active, deprecated, archived)")
+	archivedFlag := fs.Bool("archived", false, "include archived playbooks")
 	categoryFlag := fs.String("category", "", "filter by category")
 	jsonFlag := fs.Bool("json", false, "output as JSON")
 
@@ -26,11 +26,8 @@ func runList(args []string) error {
 	defer mgr.Close()
 
 	filter := playbookd.ListFilter{
-		Category: *categoryFlag,
-	}
-	if *statusFlag != "" {
-		s := playbookd.Status(*statusFlag)
-		filter.Status = &s
+		IncludeArchived: *archivedFlag,
+		Category:        *categoryFlag,
 	}
 
 	playbooks, err := mgr.List(context.Background(), filter)
@@ -52,17 +49,16 @@ func runList(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%-36s  %-30s  %-12s  %-12s  %s\n", "ID", "Name", "Status", "Category", "Confidence")
-	fmt.Printf("%-36s  %-30s  %-12s  %-12s  %s\n",
+	fmt.Printf("%-36s  %-30s  %-12s  %s\n", "ID", "Name", "Category", "Confidence")
+	fmt.Printf("%-36s  %-30s  %-12s  %s\n",
 		"------------------------------------",
 		"------------------------------",
-		"------------",
 		"------------",
 		"----------",
 	)
 	for _, pb := range playbooks {
-		fmt.Printf("%-36s  %-30s  %-12s  %-12s  %.2f\n",
-			pb.ID, pb.Name, pb.Status, pb.Category, pb.Confidence)
+		fmt.Printf("%-36s  %-30s  %-12s  %.2f\n",
+			pb.ID, pb.Name, pb.Category, pb.Confidence)
 	}
 	return nil
 }

@@ -35,7 +35,6 @@ type bleveDoc struct {
 	Description string    `json:"description"`
 	Tags        string    `json:"tags"`
 	Category    string    `json:"category"`
-	Status      string    `json:"status"`
 	Steps       string    `json:"steps"`
 	Lessons     string    `json:"lessons"`
 	Confidence  float64   `json:"confidence"`
@@ -102,7 +101,6 @@ func buildBaseIndexMapping() *mapping.IndexMappingImpl {
 	keywordField := bleve.NewKeywordFieldMapping()
 	keywordField.Store = false
 	docMapping.AddFieldMappingsAt("category", keywordField)
-	docMapping.AddFieldMappingsAt("status", keywordField)
 
 	// Numeric fields
 	numericField := bleve.NewNumericFieldMapping()
@@ -154,14 +152,6 @@ func (bi *BleveIndexer) Search(_ context.Context, query SearchQuery) ([]SearchRe
 		searchReq = bi.buildHybridRequest(query, limit)
 	default:
 		return nil, fmt.Errorf("unsupported search mode: %s", mode)
-	}
-
-	// Apply status filter if specified
-	if query.Status != nil {
-		filterQuery := bleve.NewTermQuery(string(*query.Status))
-		filterQuery.SetField("status")
-		conjQuery := bleve.NewConjunctionQuery(searchReq.Query, filterQuery)
-		searchReq.Query = conjQuery
 	}
 
 	// Apply category filter if specified
@@ -244,7 +234,6 @@ func playbookToDoc(pb *Playbook) bleveDoc {
 		Description: pb.Description,
 		Tags:        strings.Join(pb.Tags, " "),
 		Category:    pb.Category,
-		Status:      string(pb.Status),
 		Steps:       strings.Join(stepActions, " "),
 		Lessons:     strings.Join(lessonContents, " "),
 		Confidence:  pb.Confidence,

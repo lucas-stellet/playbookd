@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"sort"
-
-	"github.com/lucas-stellet/playbookd"
 )
 
 func runStats(args []string) error {
@@ -41,19 +39,7 @@ func runStats(args []string) error {
 	fmt.Printf("Total Playbooks:  %d\n", stats.TotalPlaybooks)
 	fmt.Printf("Total Executions: %d\n", stats.TotalExecs)
 	fmt.Printf("Avg Confidence:   %.2f\n", stats.AvgConfidence)
-
-	fmt.Println("\nBy Status:")
-	statuses := []playbookd.Status{
-		playbookd.StatusActive,
-		playbookd.StatusDraft,
-		playbookd.StatusDeprecated,
-		playbookd.StatusArchived,
-	}
-	for _, s := range statuses {
-		if n, ok := stats.ByStatus[s]; ok {
-			fmt.Printf("  %-12s %d\n", s, n)
-		}
-	}
+	fmt.Printf("Archived:         %d\n", stats.TotalArchived)
 
 	if len(stats.ByCategory) > 0 {
 		fmt.Println("\nBy Category:")

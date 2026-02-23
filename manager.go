@@ -49,7 +49,7 @@ type PruneResult struct {
 // Stats holds aggregate statistics.
 type Stats struct {
 	TotalPlaybooks int
-	ByStatus       map[Status]int
+	TotalArchived  int
 	ByCategory     map[string]int
 	TotalExecs     int
 	AvgConfidence  float64
@@ -115,9 +115,6 @@ func (pm *PlaybookManager) Create(ctx context.Context, pb *Playbook) error {
 	}
 	if pb.Slug == "" {
 		pb.Slug = slugify(pb.Name)
-	}
-	if pb.Status == "" {
-		pb.Status = StatusDraft
 	}
 	if pb.Version == 0 {
 		pb.Version = 1
@@ -256,16 +253,6 @@ func (pm *PlaybookManager) RecordExecution(ctx context.Context, rec *ExecutionRe
 	pb.LastUsedAt = rec.CompletedAt
 	pb.UpdateStats()
 
-	// Auto-promote draft -> active
-	if pb.ShouldPromote() {
-		pb.Status = StatusActive
-	}
-
-	// Auto-deprecate on high failure rate
-	if pb.ShouldDeprecate(0.3) {
-		pb.Status = StatusDeprecated
-	}
-
 	if err := pm.store.SavePlaybook(ctx, pb); err != nil {
 		return fmt.Errorf("save updated playbook: %w", err)
 	}
@@ -315,7 +302,7 @@ func (pm *PlaybookManager) ApplyReflection(ctx context.Context, playbookID strin
 	return pm.Update(ctx, pb)
 }
 
-// Prune archives playbooks that are deprecated or haven't been used within MaxAge.
+// Prune archives playbooks that are stale or have low confidence.
 func (pm *PlaybookManager) Prune(ctx context.Context, opts PruneOptions) (*PruneResult, error) {
 	if opts.MaxAge == 0 {
 		opts.MaxAge = pm.cfg.MaxAge
@@ -324,7 +311,7 @@ func (pm *PlaybookManager) Prune(ctx context.Context, opts PruneOptions) (*Prune
 		opts.MinConfidence = pm.cfg.MinConfidence
 	}
 
-	playbooks, err := pm.store.ListPlaybooks(ctx, ListFilter{})
+	playbooks, err := pm.store.ListPlaybooks(ctx, ListFilter{IncludeArchived: true})
 	if err != nil {
 		return nil, err
 	}
@@ -333,27 +320,31 @@ func (pm *PlaybookManager) Prune(ctx context.Context, opts PruneOptions) (*Prune
 	cutoff := time.Now().Add(-opts.MaxAge)
 
 	for _, pb := range playbooks {
+		if pb.Archived {
+			continue
+		}
+
 		shouldPrune := false
 
-		// Deprecated playbooks are prunable
-		if pb.Status == StatusDeprecated {
+		// Low confidence + old age
+		if pb.Confidence < opts.MinConfidence && pb.UpdatedAt.Before(cutoff) {
 			shouldPrune = true
 		}
 
-		// Active playbooks unused for too long
-		if pb.Status == StatusActive && !pb.LastUsedAt.IsZero() && pb.LastUsedAt.Before(cutoff) {
+		// Stale (unused too long)
+		if !pb.LastUsedAt.IsZero() && pb.LastUsedAt.Before(cutoff) {
 			shouldPrune = true
 		}
 
-		// Draft playbooks with low confidence and old age
-		if pb.Status == StatusDraft && pb.Confidence < opts.MinConfidence && pb.UpdatedAt.Before(cutoff) {
+		// Never used + old + low confidence
+		if pb.LastUsedAt.IsZero() && pb.CreatedAt.Before(cutoff) && pb.Confidence < opts.MinConfidence {
 			shouldPrune = true
 		}
 
 		if shouldPrune {
 			result.Archived = append(result.Archived, pb.ID)
 			if !opts.DryRun {
-				pb.Status = StatusArchived
+				pb.Archived = true
 				pb.UpdatedAt = time.Now()
 				if err := pm.store.SavePlaybook(ctx, pb); err != nil {
 					return nil, fmt.Errorf("archive playbook %s: %w", pb.ID, err)
@@ -374,34 +365,26 @@ func (pm *PlaybookManager) Reindex(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	// Filter out archived playbooks
-	var active []*Playbook
-	for _, pb := range playbooks {
-		if pb.Status != StatusArchived {
-			active = append(active, pb)
-		}
-	}
-
-	return pm.indexer.Reindex(ctx, active)
+	return pm.indexer.Reindex(ctx, playbooks)
 }
 
 // Stats returns aggregate statistics across all playbooks.
 func (pm *PlaybookManager) Stats(ctx context.Context) (*Stats, error) {
-	playbooks, err := pm.store.ListPlaybooks(ctx, ListFilter{})
+	playbooks, err := pm.store.ListPlaybooks(ctx, ListFilter{IncludeArchived: true})
 	if err != nil {
 		return nil, err
 	}
 
 	stats := &Stats{
 		TotalPlaybooks: len(playbooks),
-		ByStatus:       make(map[Status]int),
 		ByCategory:     make(map[string]int),
 	}
 
 	var totalConfidence float64
 	for _, pb := range playbooks {
-		stats.ByStatus[pb.Status]++
+		if pb.Archived {
+			stats.TotalArchived++
+		}
 		if pb.Category != "" {
 			stats.ByCategory[pb.Category]++
 		}

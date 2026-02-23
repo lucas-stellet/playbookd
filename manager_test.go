@@ -56,9 +56,6 @@ func TestManagerCreate(t *testing.T) {
 	if pb.Slug == "" {
 		t.Error("expected Slug to be set after Create")
 	}
-	if pb.Status != StatusDraft {
-		t.Errorf("Status = %q, want %q", pb.Status, StatusDraft)
-	}
 	if pb.Version != 1 {
 		t.Errorf("Version = %d, want 1", pb.Version)
 	}
@@ -190,73 +187,6 @@ func TestManagerRecordExecution(t *testing.T) {
 	}
 }
 
-func TestManagerRecordExecutionPromotesDraft(t *testing.T) {
-	pm := newTestManager(t)
-	ctx := context.Background()
-
-	pb := samplePlaybook("Promote Me")
-	if err := pm.Create(ctx, pb); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	// 3 successful executions should auto-promote from draft to active.
-	for i := 0; i < 3; i++ {
-		rec := &ExecutionRecord{
-			PlaybookID:  pb.ID,
-			PlaybookVer: 1,
-			AgentID:     "agent-1",
-			Outcome:     OutcomeSuccess,
-			StartedAt:   time.Now(),
-			CompletedAt: time.Now().Add(time.Minute),
-		}
-		if err := pm.RecordExecution(ctx, rec); err != nil {
-			t.Fatalf("RecordExecution %d: %v", i+1, err)
-		}
-	}
-
-	updated, err := pm.Get(ctx, pb.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if updated.Status != StatusActive {
-		t.Errorf("Status = %q, want %q after promotion", updated.Status, StatusActive)
-	}
-}
-
-func TestManagerRecordExecutionDeprecatesOnHighFailures(t *testing.T) {
-	pm := newTestManager(t)
-	ctx := context.Background()
-
-	pb := samplePlaybook("Failing Playbook")
-	pb.Status = StatusActive
-	if err := pm.Create(ctx, pb); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	// Record 5 executions: 1 success, 4 failures (20% success rate < 30% threshold).
-	outcomes := []Outcome{OutcomeSuccess, OutcomeFailure, OutcomeFailure, OutcomeFailure, OutcomeFailure}
-	for _, outcome := range outcomes {
-		rec := &ExecutionRecord{
-			PlaybookID:  pb.ID,
-			PlaybookVer: 1,
-			Outcome:     outcome,
-			StartedAt:   time.Now(),
-			CompletedAt: time.Now().Add(time.Minute),
-		}
-		if err := pm.RecordExecution(ctx, rec); err != nil {
-			t.Fatalf("RecordExecution: %v", err)
-		}
-	}
-
-	updated, err := pm.Get(ctx, pb.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if updated.Status != StatusDeprecated {
-		t.Errorf("Status = %q, want %q", updated.Status, StatusDeprecated)
-	}
-}
-
 func TestManagerListExecutions(t *testing.T) {
 	pm := newTestManager(t)
 	ctx := context.Background()
@@ -346,8 +276,8 @@ func TestManagerStats(t *testing.T) {
 	if stats.TotalPlaybooks != 2 {
 		t.Errorf("TotalPlaybooks = %d, want 2", stats.TotalPlaybooks)
 	}
-	if stats.ByStatus[StatusDraft] != 2 {
-		t.Errorf("ByStatus[draft] = %d, want 2", stats.ByStatus[StatusDraft])
+	if stats.TotalArchived != 0 {
+		t.Errorf("TotalArchived = %d, want 0", stats.TotalArchived)
 	}
 	if stats.ByCategory["infra"] != 2 {
 		t.Errorf("ByCategory[infra] = %d, want 2", stats.ByCategory["infra"])
@@ -358,33 +288,37 @@ func TestManagerPrune(t *testing.T) {
 	pm := newTestManager(t)
 	ctx := context.Background()
 
-	// Create a deprecated playbook.
-	deprecated := samplePlaybook("Old Deprecated")
-	if err := pm.Create(ctx, deprecated); err != nil {
+	// Create a stale playbook with low confidence and old timestamps.
+	stale := samplePlaybook("Old Stale")
+	if err := pm.Create(ctx, stale); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// Manually set it as deprecated via store.
-	dep, err := pm.Get(ctx, deprecated.ID)
+	stalePB, err := pm.Get(ctx, stale.ID)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	dep.Status = StatusDeprecated
-	if err := pm.store.SavePlaybook(ctx, dep); err != nil {
+	oldTime := time.Now().Add(-180 * 24 * time.Hour) // 180 days ago
+	stalePB.CreatedAt = oldTime
+	stalePB.UpdatedAt = oldTime
+	stalePB.Confidence = 0.1
+	if err := pm.store.SavePlaybook(ctx, stalePB); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	// Create an active playbook that should survive.
-	active := samplePlaybook("Healthy Active")
-	if err := pm.Create(ctx, active); err != nil {
+	// Create a healthy playbook that should survive.
+	healthy := samplePlaybook("Healthy Active")
+	if err := pm.Create(ctx, healthy); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	act, err := pm.Get(ctx, active.ID)
+	healthyPB, err := pm.Get(ctx, healthy.ID)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	act.Status = StatusActive
-	act.LastUsedAt = time.Now()
-	if err := pm.store.SavePlaybook(ctx, act); err != nil {
+	healthyPB.LastUsedAt = time.Now()
+	healthyPB.Confidence = 0.8
+	healthyPB.SuccessCount = 10
+	healthyPB.UpdateStats()
+	if err := pm.store.SavePlaybook(ctx, healthyPB); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -400,17 +334,17 @@ func TestManagerPrune(t *testing.T) {
 	if len(result.Archived) != 1 {
 		t.Errorf("Archived count = %d, want 1", len(result.Archived))
 	}
-	if result.Archived[0] != deprecated.ID {
-		t.Errorf("Archived[0] = %q, want %q", result.Archived[0], deprecated.ID)
+	if result.Archived[0] != stale.ID {
+		t.Errorf("Archived[0] = %q, want %q", result.Archived[0], stale.ID)
 	}
 
-	// Deprecated playbook should now be archived.
-	prunedPB, err := pm.Get(ctx, deprecated.ID)
+	// Stale playbook should now be archived.
+	prunedPB, err := pm.Get(ctx, stale.ID)
 	if err != nil {
 		t.Fatalf("Get pruned playbook: %v", err)
 	}
-	if prunedPB.Status != StatusArchived {
-		t.Errorf("pruned playbook Status = %q, want %q", prunedPB.Status, StatusArchived)
+	if !prunedPB.Archived {
+		t.Error("pruned playbook should be archived")
 	}
 }
 
@@ -418,16 +352,19 @@ func TestManagerPruneDryRun(t *testing.T) {
 	pm := newTestManager(t)
 	ctx := context.Background()
 
-	deprecated := samplePlaybook("Dry Run Deprecated")
-	if err := pm.Create(ctx, deprecated); err != nil {
+	stale := samplePlaybook("Dry Run Stale")
+	if err := pm.Create(ctx, stale); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	dep, err := pm.Get(ctx, deprecated.ID)
+	stalePB, err := pm.Get(ctx, stale.ID)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	dep.Status = StatusDeprecated
-	if err := pm.store.SavePlaybook(ctx, dep); err != nil {
+	oldTime := time.Now().Add(-180 * 24 * time.Hour)
+	stalePB.CreatedAt = oldTime
+	stalePB.UpdatedAt = oldTime
+	stalePB.Confidence = 0.1
+	if err := pm.store.SavePlaybook(ctx, stalePB); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -445,12 +382,12 @@ func TestManagerPruneDryRun(t *testing.T) {
 	}
 
 	// The playbook should NOT have been changed since it was a dry run.
-	pb, err := pm.Get(ctx, deprecated.ID)
+	pb, err := pm.Get(ctx, stale.ID)
 	if err != nil {
 		t.Fatalf("Get after dry run: %v", err)
 	}
-	if pb.Status != StatusDeprecated {
-		t.Errorf("Status = %q after dry run, expected still %q", pb.Status, StatusDeprecated)
+	if pb.Archived {
+		t.Error("playbook should not be archived after dry run")
 	}
 }
 
@@ -495,7 +432,7 @@ func TestManagerIntegrationWorkflow(t *testing.T) {
 		t.Errorf("found playbook ID = %q, want %q", foundID, pb.ID)
 	}
 
-	// 3. Record 3 successful executions (auto-promotes draft -> active).
+	// 3. Record 3 successful executions.
 	for i := 0; i < 3; i++ {
 		rec := &ExecutionRecord{
 			PlaybookID:  pb.ID,
@@ -517,9 +454,6 @@ func TestManagerIntegrationWorkflow(t *testing.T) {
 	}
 	if afterExec.SuccessCount != 3 {
 		t.Errorf("SuccessCount = %d, want 3", afterExec.SuccessCount)
-	}
-	if afterExec.Status != StatusActive {
-		t.Errorf("Status = %q, want active after promotion", afterExec.Status)
 	}
 
 	// 4. Apply a reflection.
@@ -557,16 +491,13 @@ func TestManagerIntegrationWorkflow(t *testing.T) {
 		t.Error("expected search to find playbook after reflection and re-index")
 	}
 
-	// 6. Stats should reflect one playbook in active status.
+	// 6. Stats should reflect one playbook.
 	stats, err := pm.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
 	if stats.TotalPlaybooks != 1 {
 		t.Errorf("TotalPlaybooks = %d, want 1", stats.TotalPlaybooks)
-	}
-	if stats.ByStatus[StatusActive] != 1 {
-		t.Errorf("ByStatus[active] = %d, want 1", stats.ByStatus[StatusActive])
 	}
 	if stats.TotalExecs != 3 {
 		t.Errorf("TotalExecs = %d, want 3", stats.TotalExecs)

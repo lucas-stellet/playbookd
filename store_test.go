@@ -15,7 +15,6 @@ func newTestPlaybook(id, name string) *Playbook {
 		Description: "Test playbook " + name,
 		Tags:        []string{"test", "unit"},
 		Category:    "testing",
-		Status:      StatusDraft,
 		Version:     1,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -57,9 +56,6 @@ func TestFileStoreSaveAndGetPlaybook(t *testing.T) {
 	}
 	if got.Name != pb.Name {
 		t.Errorf("Name = %q, want %q", got.Name, pb.Name)
-	}
-	if got.Status != pb.Status {
-		t.Errorf("Status = %q, want %q", got.Status, pb.Status)
 	}
 }
 
@@ -103,11 +99,11 @@ func TestFileStoreListPlaybooks(t *testing.T) {
 	fs, _ := NewFileStore(dir)
 	ctx := context.Background()
 
-	active := StatusActive
 	pbs := []*Playbook{
-		{ID: "a", Name: "Alpha", Status: StatusActive, Category: "ops", Tags: []string{"tag1"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
-		{ID: "b", Name: "Beta", Status: StatusDraft, Category: "ops", Tags: []string{"tag1", "tag2"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
-		{ID: "c", Name: "Gamma", Status: StatusActive, Category: "dev", Tags: []string{"tag2"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "a", Name: "Alpha", Category: "ops", Tags: []string{"tag1"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "b", Name: "Beta", Category: "ops", Tags: []string{"tag1", "tag2"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "c", Name: "Gamma", Category: "dev", Tags: []string{"tag2"}, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "d", Name: "Delta", Category: "ops", Archived: true, CreatedAt: time.Now(), UpdatedAt: time.Now()},
 	}
 	for _, pb := range pbs {
 		if err := fs.SavePlaybook(ctx, pb); err != nil {
@@ -115,7 +111,7 @@ func TestFileStoreListPlaybooks(t *testing.T) {
 		}
 	}
 
-	t.Run("no filter returns all", func(t *testing.T) {
+	t.Run("no filter returns non-archived", func(t *testing.T) {
 		results, err := fs.ListPlaybooks(ctx, ListFilter{})
 		if err != nil {
 			t.Fatalf("ListPlaybooks: %v", err)
@@ -125,13 +121,13 @@ func TestFileStoreListPlaybooks(t *testing.T) {
 		}
 	})
 
-	t.Run("filter by status", func(t *testing.T) {
-		results, err := fs.ListPlaybooks(ctx, ListFilter{Status: &active})
+	t.Run("include archived returns all", func(t *testing.T) {
+		results, err := fs.ListPlaybooks(ctx, ListFilter{IncludeArchived: true})
 		if err != nil {
 			t.Fatalf("ListPlaybooks: %v", err)
 		}
-		if len(results) != 2 {
-			t.Errorf("got %d playbooks, want 2", len(results))
+		if len(results) != 4 {
+			t.Errorf("got %d playbooks, want 4", len(results))
 		}
 	})
 

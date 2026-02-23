@@ -61,8 +61,10 @@ func runGet(args []string) error {
 	fmt.Printf("Name:       %s\n", pb.Name)
 	fmt.Printf("ID:         %s\n", pb.ID)
 	fmt.Printf("Slug:       %s\n", pb.Slug)
-	fmt.Printf("Status:     %s\n", pb.Status)
 	fmt.Printf("Category:   %s\n", pb.Category)
+	if pb.Archived {
+		fmt.Println("** ARCHIVED **")
+	}
 	fmt.Printf("Version:    %d\n", pb.Version)
 	fmt.Printf("Confidence: %.2f\n", pb.Confidence)
 	fmt.Printf("Success:    %d  Failure: %d\n", pb.SuccessCount, pb.FailureCount)

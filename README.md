@@ -8,7 +8,6 @@ Instead of rediscovering solutions on every run, an agent using playbookd can fi
 
 - **Hybrid search**: BM25 full-text search via [Bleve](https://blevesearch.com/) combined with cosine vector search via [FAISS](https://faiss.ai/) (optional, requires `-tags vectors`)
 - **Wilson confidence scoring**: prevents a playbook with 1 success from outranking one with 95/100 — confidence is statistically grounded
-- **Playbook lifecycle**: `draft` → `active` → `deprecated` → `archived`, with automatic promotion and deprecation based on execution outcomes
 - **Execution recording and reflection**: agents record step-by-step results; reflections are distilled into lessons that improve the playbook over time
 - **Embedding providers**: built-in support for [OpenAI](https://platform.openai.com/), [Google Gemini](https://ai.google.dev/), and [Ollama](https://ollama.com/) — or bring your own `EmbeddingFunc`
 - **CLI tool**: inspect, search, prune, and reindex your playbook store from the command line
@@ -102,7 +101,7 @@ if err := mgr.Create(ctx, pb); err != nil {
 fmt.Printf("Created: %s (id: %s)\n", pb.Name, pb.ID)
 ```
 
-The manager assigns an ID, generates a slug, sets the status to `draft`, computes the embedding (if configured), saves to disk, and indexes for search.
+The manager assigns an ID, generates a slug, computes the embedding (if configured), saves to disk, and indexes for search.
 
 ### Searching for playbooks
 
@@ -116,19 +115,17 @@ if err != nil {
 }
 
 for _, r := range results {
-    fmt.Printf("[%.2f] %s — %s (confidence: %.0f%%)\n",
-        r.Score, r.Playbook.Name, r.Playbook.Status, r.Playbook.Confidence*100)
+    fmt.Printf("[%.2f] %s (confidence: %.0f%%)\n",
+        r.Score, r.Playbook.Name, r.Playbook.Confidence*100)
 }
 ```
 
-You can filter by category or status:
+You can filter by category:
 
 ```go
-active := playbookd.StatusActive
 results, _ := mgr.Search(ctx, playbookd.SearchQuery{
     Text:     "deploy",
     Category: "deployment",
-    Status:   &active,
     MinScore: 0.3,
 })
 ```
@@ -162,8 +159,6 @@ if err := mgr.RecordExecution(ctx, rec); err != nil {
 Recording an execution automatically:
 - Updates `SuccessCount`/`FailureCount` on the playbook
 - Recalculates the Wilson confidence score
-- Promotes `draft` → `active` after 3 successes
-- Deprecates playbooks with success rate below 30% (with 5+ executions)
 
 Available outcomes: `OutcomeSuccess`, `OutcomePartial` (counts as success for stats), `OutcomeFailure`.
 
@@ -210,10 +205,8 @@ pb, err := mgr.Get(ctx, "playbook-uuid-here")
 // List all playbooks
 all, _ := mgr.List(ctx, playbookd.ListFilter{})
 
-// List active playbooks in a category
-active := playbookd.StatusActive
+// List playbooks in a category
 deploys, _ := mgr.List(ctx, playbookd.ListFilter{
-    Status:   &active,
     Category: "deployment",
 })
 
@@ -248,7 +241,7 @@ for _, e := range execs {
 
 ### Pruning stale playbooks
 
-Prune archives playbooks that are deprecated or haven't been used within `MaxAge`:
+Prune archives playbooks that are stale or have low confidence:
 
 ```go
 // Dry run — see what would be archived
@@ -273,7 +266,7 @@ stats, _ := mgr.Stats(ctx)
 fmt.Printf("Total playbooks: %d\n", stats.TotalPlaybooks)
 fmt.Printf("Total executions: %d\n", stats.TotalExecs)
 fmt.Printf("Avg confidence: %.0f%%\n", stats.AvgConfidence*100)
-fmt.Printf("By status: %v\n", stats.ByStatus)
+fmt.Printf("Archived: %d\n", stats.TotalArchived)
 fmt.Printf("By category: %v\n", stats.ByCategory)
 ```
 
@@ -468,8 +461,8 @@ playbookd init -force
 # List all playbooks
 playbookd list
 
-# Filter by status
-playbookd list -status active
+# Include archived playbooks
+playbookd list -archived
 
 # Filter by category
 playbookd list -category deployment
@@ -495,7 +488,7 @@ playbookd stats
 
 **Prune stale playbooks**
 
-Archives deprecated playbooks and those not used within the configured `MaxAge`:
+Archives stale playbooks with low confidence or those not used within the configured `MaxAge`:
 
 ```sh
 # Dry run — show what would be archived
@@ -674,20 +667,7 @@ PlaybookManager
   └── RecordExecution                             │
         ├── updates SuccessCount / FailureCount   │
         ├── recalculates Wilson confidence ◄──────┘
-        ├── auto-promotes draft → active (≥3 successes)
-        ├── auto-deprecates on failure rate > 70%
         └── ApplyReflection → adds Lessons → Update
-```
-
-### Playbook lifecycle
-
-```
-draft ──(3 successes)──► active ──(failure rate > 70%)──► deprecated
-                                                               │
-                         prune ◄────────────────────────────── ┘
-                           │
-                           ▼
-                        archived
 ```
 
 ### Data layout on disk

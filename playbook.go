@@ -5,16 +5,6 @@ import (
 	"time"
 )
 
-// Status represents the lifecycle state of a playbook.
-type Status string
-
-const (
-	StatusDraft      Status = "draft"
-	StatusActive     Status = "active"
-	StatusDeprecated Status = "deprecated"
-	StatusArchived   Status = "archived"
-)
-
 const z95 = 1.96 // z-score for 95% confidence interval
 
 // Outcome represents the result of an execution.
@@ -40,7 +30,7 @@ type Playbook struct {
 	FailureCount int       `json:"failure_count"`
 	SuccessRate  float64   `json:"success_rate"`
 	Confidence   float64   `json:"confidence"`
-	Status       Status    `json:"status"`
+	Archived     bool      `json:"archived,omitempty"`
 	Lessons      []Lesson  `json:"lessons"`
 	Embedding    []float32 `json:"embedding,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -104,10 +94,10 @@ type Lesson struct {
 
 // ListFilter configures playbook listing.
 type ListFilter struct {
-	Status   *Status
-	Category string
-	Tags     []string
-	Limit    int
+	IncludeArchived bool
+	Category        string
+	Tags            []string
+	Limit           int
 }
 
 // WilsonConfidence calculates the Wilson score interval lower bound at 95% CI.
@@ -139,17 +129,3 @@ func (pb *Playbook) UpdateStats() {
 	pb.Confidence = WilsonConfidence(pb.SuccessCount, pb.FailureCount)
 }
 
-// ShouldPromote checks if a draft playbook should be promoted to active.
-// Requires 3+ successful executions.
-func (pb *Playbook) ShouldPromote() bool {
-	return pb.Status == StatusDraft && pb.SuccessCount >= 3
-}
-
-// ShouldDeprecate checks if a playbook should be deprecated due to consistent failures.
-func (pb *Playbook) ShouldDeprecate(failureThreshold float64) bool {
-	total := pb.SuccessCount + pb.FailureCount
-	if total < 5 {
-		return false
-	}
-	return pb.SuccessRate < failureThreshold
-}
