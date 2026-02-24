@@ -15,6 +15,7 @@ Commands:
   list      List playbooks
   search    Search for playbooks
   get       Get a specific playbook
+  edit      Edit a playbook in an external editor
   stats     Show aggregate statistics
   prune     Archive stale playbooks
   reindex   Rebuild the search index
@@ -40,6 +41,8 @@ func main() {
 		err = runSearch(args)
 	case "get":
 		err = runGet(args)
+	case "edit":
+		err = runEdit(args)
 	case "stats":
 		err = runStats(args)
 	case "prune":
