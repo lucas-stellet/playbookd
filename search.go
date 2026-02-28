@@ -11,12 +11,13 @@ const (
 
 // SearchQuery configures a playbook search.
 type SearchQuery struct {
-	Text      string     // Natural language query
-	Mode      SearchMode // hybrid, bm25, or vector
-	Category  string     // Filter by category
-	MinScore  float64    // Minimum result score
-	Limit     int        // Max results (default 5)
-	Embedding []float32  // Pre-computed query embedding (optional)
+	Text             string     // Natural language query
+	Mode             SearchMode // hybrid, bm25, or vector
+	Category         string     // Filter by category
+	MinScore         float64    // Minimum result score
+	Limit            int        // Max results (default 5)
+	Embedding        []float32  // Pre-computed query embedding (optional)
+	ConfidenceWeight float64    // 0=disabled. final = (1-w)*textScore + w*confidence
 }
 
 // SearchResult represents a single search hit.

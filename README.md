@@ -7,6 +7,9 @@ Instead of rediscovering solutions on every run, an agent using playbookd can fi
 ## Features
 
 - **Hybrid search**: BM25 full-text search via [Bleve](https://blevesearch.com/) combined with cosine vector search via [FAISS](https://faiss.ai/) (optional, requires `-tags vectors`)
+- **Composite scoring**: blend text relevance with Wilson confidence to surface battle-tested playbooks — `ConfidenceWeight` controls the mix
+- **Contrastive search**: split results into proven (high confidence) and failed (low confidence) groups, so agents know what to follow and what to avoid
+- **LLM context formatting**: render contrastive results as structured Markdown ready for in-context learning — inject directly into an agent's prompt
 - **Wilson confidence scoring**: prevents a playbook with 1 success from outranking one with 95/100 — confidence is statistically grounded
 - **Execution recording and reflection**: agents record step-by-step results; reflections are distilled into lessons that improve the playbook over time
 - **Embedding providers**: built-in support for [OpenAI](https://platform.openai.com/), [Google Gemini](https://ai.google.dev/), and [Ollama](https://ollama.com/) — or bring your own `EmbeddingFunc`
@@ -129,6 +132,103 @@ results, _ := mgr.Search(ctx, playbookd.SearchQuery{
     MinScore: 0.3,
 })
 ```
+
+#### Composite scoring
+
+By default, results are ranked purely by text relevance. Set `ConfidenceWeight` to blend in the playbook's Wilson confidence score, so battle-tested playbooks rank higher:
+
+```go
+results, _ := mgr.Search(ctx, playbookd.SearchQuery{
+    Text:             "deploy go service",
+    ConfidenceWeight: 0.3, // 0=text only, 1=confidence only
+})
+```
+
+The final score is computed as `(1 - weight) * normalizedTextScore + weight * confidence`. Text scores are min-max normalized to [0,1] before blending. A weight of 0 (the default) preserves the original ranking — existing code is unaffected.
+
+### Contrastive search
+
+Standard search returns a flat ranked list. Contrastive search goes further: it splits results into **proven** (high confidence) and **failed** (low confidence) groups, giving agents clear signal on what to follow and what to avoid.
+
+```go
+cr, err := mgr.SearchWithContext(ctx, playbookd.ContrastiveQuery{
+    SearchQuery: playbookd.SearchQuery{
+        Text:  "deploy go service",
+        Limit: 5,
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Proven approaches: %d\n", len(cr.Positive))
+fmt.Printf("Failed approaches: %d\n", len(cr.Negative))
+```
+
+The split is based on the playbook's Wilson confidence score (not the blended search score):
+- **Positive**: confidence >= 0.5 (default, configurable via `PositiveMinConfidence`)
+- **Negative**: confidence <= 0.3 (default, configurable via `NegativeMaxConfidence`)
+- **Neutral**: everything in between (only included when `IncludeNeutral: true`)
+
+Custom thresholds:
+
+```go
+cr, _ := mgr.SearchWithContext(ctx, playbookd.ContrastiveQuery{
+    SearchQuery:           playbookd.SearchQuery{Text: "deploy"},
+    PositiveMinConfidence: 0.7,  // stricter: only highly proven playbooks
+    NegativeMaxConfidence: 0.2,  // stricter: only clearly failed playbooks
+    IncludeNeutral:        true, // also return the middle ground
+})
+```
+
+Internally, `SearchWithContext` searches with 3x the requested limit and `MinScore: 0` to capture low-quality matches that belong in the negative group, then caps each group to the original limit.
+
+### Formatting results for LLM context
+
+`FormatForContext` renders contrastive search results as structured Markdown that you can inject directly into an LLM's prompt for in-context learning:
+
+```go
+cr, _ := mgr.SearchWithContext(ctx, playbookd.ContrastiveQuery{
+    SearchQuery: playbookd.SearchQuery{Text: "deploy go service"},
+})
+
+prompt := playbookd.FormatForContext(cr)
+fmt.Println(prompt)
+```
+
+Output:
+
+```markdown
+## Playbook Context: deploy go service
+
+### Proven Approaches (Follow These)
+
+**1. Safe Production Deploy** (confidence: 85%, executions: 20)
+
+Steps:
+  1. Run test suite
+  2. Build Docker image
+  3. Deploy to staging
+  4. Run smoke tests
+  5. Promote to production
+
+Lessons learned:
+  - Always run smoke tests before promoting
+
+### Failed Approaches (Avoid These)
+
+**1. Quick Deploy** (confidence: 5%, failure rate: 90%)
+
+What failed:
+  - Skipping tests caused repeated rollbacks
+
+---
+Follow the proven approaches. Avoid the patterns described in failed approaches.
+```
+
+This output is designed to be concatenated into a system prompt or user message. The agent receives structured procedural memory — what works, what doesn't, and why — without needing to interpret raw scores.
+
+`FormatForContext` handles edge cases: returns `""` for nil input, and `"No relevant playbooks found for: <query>"` when both groups are empty.
 
 ### Recording an execution
 
@@ -658,9 +758,14 @@ Agent
 PlaybookManager
   ├── Search(query) ──────────────────────────────┐
   │     ├── EmbeddingFunc (optional)              │
-  │     └── Indexer (Bleve + FAISS)               │
-  │           ├── BM25 text search                │
-  │           └── cosine vector search (-tags vectors)
+  │     ├── Indexer (Bleve + FAISS)               │
+  │     │     ├── BM25 text search                │
+  │     │     └── cosine vector search (-tags vectors)
+  │     └── Composite scoring (ConfidenceWeight)  │
+  │                                               │
+  ├── SearchWithContext(query) ◄── contrastive    │
+  │     ├── splits into Positive / Negative       │
+  │     └── FormatForContext() → Markdown for LLM │
   │                                               │
   ├── Create / Update / Delete ──► Store (JSON files)
   │                                               │

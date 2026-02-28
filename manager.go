@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -220,7 +221,45 @@ func (pm *PlaybookManager) Search(ctx context.Context, query SearchQuery) ([]Sea
 		})
 	}
 
+	// Composite score blending
+	if query.ConfidenceWeight > 0 && len(hydrated) > 0 {
+		w := query.ConfidenceWeight
+		if w > 1 {
+			w = 1
+		}
+
+		// Find min/max text scores for normalization
+		minScore, maxScore := hydrated[0].Score, hydrated[0].Score
+		for _, r := range hydrated[1:] {
+			if r.Score < minScore {
+				minScore = r.Score
+			}
+			if r.Score > maxScore {
+				maxScore = r.Score
+			}
+		}
+
+		// Blend and re-sort
+		for i := range hydrated {
+			norm := normalizeScore(hydrated[i].Score, minScore, maxScore)
+			hydrated[i].Score = (1-w)*norm + w*hydrated[i].Playbook.Confidence
+		}
+
+		sort.Slice(hydrated, func(i, j int) bool {
+			return hydrated[i].Score > hydrated[j].Score
+		})
+	}
+
 	return hydrated, nil
+}
+
+// normalizeScore applies min-max normalization to [0,1].
+// Returns 1.0 if all scores are equal.
+func normalizeScore(score, min, max float64) float64 {
+	if max == min {
+		return 1.0
+	}
+	return (score - min) / (max - min)
 }
 
 // RecordExecution saves an execution record and updates the playbook stats.

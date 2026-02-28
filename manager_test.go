@@ -510,3 +510,139 @@ func TestNewPlaybookManagerRequiresDataDir(t *testing.T) {
 		t.Error("expected error when DataDir is empty")
 	}
 }
+
+func TestManagerSearchCompositeScore(t *testing.T) {
+	pm := newTestManager(t)
+	ctx := context.Background()
+
+	// Create two playbooks with the same keyword so BM25 finds both.
+	pbA := samplePlaybook("Deployment Alpha")
+	pbA.Description = "deployment procedure for production servers"
+	pbA.Tags = []string{"deployment"}
+	if err := pm.Create(ctx, pbA); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	pbB := samplePlaybook("Deployment Beta")
+	pbB.Description = "deployment procedure for staging servers"
+	pbB.Tags = []string{"deployment"}
+	if err := pm.Create(ctx, pbB); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Give playbook A low confidence (1 success, 9 failures).
+	gotA, err := pm.Get(ctx, pbA.ID)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	gotA.SuccessCount = 1
+	gotA.FailureCount = 9
+	gotA.UpdateStats()
+	if err := pm.store.SavePlaybook(ctx, gotA); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Give playbook B high confidence (9 successes, 1 failure).
+	gotB, err := pm.Get(ctx, pbB.ID)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	gotB.SuccessCount = 9
+	gotB.FailureCount = 1
+	gotB.UpdateStats()
+	if err := pm.store.SavePlaybook(ctx, gotB); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	results, err := pm.Search(ctx, SearchQuery{
+		Text:             "deployment",
+		Mode:             SearchModeBM25,
+		ConfidenceWeight: 0.9,
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// High-confidence playbook B should be first.
+	if results[0].Playbook.ID != pbB.ID {
+		t.Errorf("expected high-confidence playbook %q first, got %q", pbB.ID, results[0].Playbook.ID)
+	}
+}
+
+func TestManagerSearchCompositeScoreZeroWeightUnchanged(t *testing.T) {
+	pm := newTestManager(t)
+	ctx := context.Background()
+
+	pbA := samplePlaybook("Scaling Alpha")
+	pbA.Description = "scaling procedure for web services"
+	pbA.Tags = []string{"scaling"}
+	if err := pm.Create(ctx, pbA); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	pbB := samplePlaybook("Scaling Beta")
+	pbB.Description = "scaling procedure for databases"
+	pbB.Tags = []string{"scaling"}
+	if err := pm.Create(ctx, pbB); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Set different confidences.
+	gotA, err := pm.Get(ctx, pbA.ID)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	gotA.SuccessCount = 1
+	gotA.FailureCount = 9
+	gotA.UpdateStats()
+	if err := pm.store.SavePlaybook(ctx, gotA); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	gotB, err := pm.Get(ctx, pbB.ID)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	gotB.SuccessCount = 9
+	gotB.FailureCount = 1
+	gotB.UpdateStats()
+	if err := pm.store.SavePlaybook(ctx, gotB); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Search with zero weight (disabled) — should just return results without reordering.
+	results, err := pm.Search(ctx, SearchQuery{
+		Text:             "scaling",
+		Mode:             SearchModeBM25,
+		ConfidenceWeight: 0,
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+}
+
+func TestNormalizeScore(t *testing.T) {
+	tests := []struct {
+		score, min, max float64
+		want            float64
+	}{
+		{score: 10, min: 0, max: 10, want: 1.0},
+		{score: 0, min: 0, max: 10, want: 0.0},
+		{score: 5, min: 0, max: 10, want: 0.5},
+		{score: 5, min: 5, max: 5, want: 1.0}, // all equal
+	}
+	for _, tc := range tests {
+		got := normalizeScore(tc.score, tc.min, tc.max)
+		if got != tc.want {
+			t.Errorf("normalizeScore(%v, %v, %v) = %v, want %v", tc.score, tc.min, tc.max, got, tc.want)
+		}
+	}
+}
